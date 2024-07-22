@@ -398,15 +398,21 @@ fn main() -> Result<()> {
                                 if changed.removed.is_empty() || changed.added.is_empty() {
                                     Some(ChunkLines::Changed(changed))
                                 } else {
-                                    // Simplifying assumption: whitespace is not significant.
+                                    // Simplifying assumption: whitespace is not significant, so
+                                    // join the removed lines and the add lines together and squash
+                                    // whitespace. As a concession to how clang-format (and humans)
+                                    // tend to format and reflow code, change any `( ` back to `(`
+                                    // to improve the effectiveness of fuzzy matching.
                                     // TODO: Line merging and whitespace collapsing should possibly be
                                     // a preprocessing step.
                                     let removed_text = multiple_whitespace_re
                                         .replace_all(&changed.removed.join(" "), " ")
-                                        .into_owned();
+                                        .into_owned()
+                                        .replace("( ", "(");
                                     let added_text = multiple_whitespace_re
                                         .replace_all(&changed.added.join(" "), " ")
-                                        .into_owned();
+                                        .into_owned()
+                                        .replace("( ", "(");
                                     // Attempt to transform the before (aka removed) to the after (aka
                                     // added). Is this efficient? Not particularly. Does it work? Ish.
                                     let transformed_text = REPLACEMENTS.iter().fold(
