@@ -67,7 +67,7 @@ impl<'a> fmt::Display for ChunkLines<'a> {
         match self {
             ChunkLines::Context(lines) => {
                 for line in lines {
-                    writeln!(f, "{line}")?;
+                    writeln!(f, " {line}")?;
                 }
             }
             ChunkLines::Changed(changed) => {
