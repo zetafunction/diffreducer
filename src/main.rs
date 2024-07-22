@@ -71,7 +71,7 @@ impl<'a> fmt::Display for ChunkLines<'a> {
                 }
             }
             ChunkLines::Changed(changed) => {
-                writeln!(f, "{changed}")?;
+                write!(f, "{changed}")?;
             }
         };
         Ok(())
