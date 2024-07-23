@@ -36,34 +36,34 @@ impl<'a> fmt::Display for FileDiff<'a> {
 #[derive(Debug)]
 struct Chunk<'a> {
     header: &'a str,
-    lineses: Vec<ChunkLines<'a>>,
+    blocks: Vec<ChunkBlock<'a>>,
 }
 
 impl<'a> fmt::Display for Chunk<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.header)?;
-        for chunk_lines in &self.lineses {
-            write!(f, "{chunk_lines}")?;
+        for block in &self.blocks {
+            write!(f, "{block}")?;
         }
         Ok(())
     }
 }
 
 #[derive(Debug)]
-enum ChunkLines<'a> {
+enum ChunkBlock<'a> {
     Context(Vec<&'a str>),
     Changed(Changed<'a>),
 }
 
-impl<'a> fmt::Display for ChunkLines<'a> {
+impl<'a> fmt::Display for ChunkBlock<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ChunkLines::Context(lines) => {
+            ChunkBlock::Context(lines) => {
                 for line in lines {
                     writeln!(f, " {line}")?;
                 }
             }
-            ChunkLines::Changed(changed) => {
+            ChunkBlock::Changed(changed) => {
                 write!(f, "{changed}")?;
             }
         };
@@ -274,6 +274,12 @@ const REPLACEMENTS: &[Replacement] = &[
         before: "ET_LAST",
         after: "EventType::kLast",
     },
+    // Some before code fully-qualifies unscoped enum values, even though it's not needed. The
+    // simple search and replace above will double-qualify them, so undo that here.
+    Replacement {
+        before: "EventType::EventType::",
+        after: "EventType::",
+    },
 ];
 
 fn main() -> Result<()> {
@@ -337,7 +343,7 @@ fn main() -> Result<()> {
                         .lines()
                         .map(|line| line.split_at(1))
                         .collect::<Vec<_>>();
-                    let chunk_lineses = chunk_text_lines
+                    let blocks = chunk_text_lines
                         .chunk_by(|&(a, _), &(b, _)| a == b || a == "-" && b == "+")
                         .map(|lines| {
                             let (removed, added) = lines.iter().fold(
@@ -353,19 +359,16 @@ fn main() -> Result<()> {
                                 },
                             );
                             if removed.is_empty() && added.is_empty() {
-                                ChunkLines::Context(
+                                ChunkBlock::Context(
                                     lines.iter().map(|(_prefix, line)| line).cloned().collect(),
                                 )
                             } else {
-                                ChunkLines::Changed(Changed { removed, added })
+                                ChunkBlock::Changed(Changed { removed, added })
                             }
                         })
                         .collect::<Vec<_>>();
 
-                    Chunk {
-                        header,
-                        lineses: chunk_lineses,
-                    }
+                    Chunk { header, blocks }
                 })
                 .collect::<Vec<_>>();
 
@@ -378,14 +381,14 @@ fn main() -> Result<()> {
         .filter_map(|FileDiff { header, chunks }| {
             let chunks = chunks
                 .into_iter()
-                .filter_map(|Chunk { header, lineses }| {
-                    let new_lineses = lineses
+                .filter_map(|Chunk { header, blocks }| {
+                    let new_blocks = blocks
                         .into_iter()
-                        .filter_map(|chunk_lines| match chunk_lines {
-                            ChunkLines::Changed(changed) => {
+                        .filter_map(|block| match block {
+                            ChunkBlock::Changed(changed) => {
                                 // TODO: For now, hardcode the checks.
                                 if changed.removed.is_empty() || changed.added.is_empty() {
-                                    Some(ChunkLines::Changed(changed))
+                                    Some(ChunkBlock::Changed(changed))
                                 } else {
                                     // Simplifying assumption: whitespace is not significant, so
                                     // join the removed lines and the add lines together and squash
@@ -415,11 +418,11 @@ fn main() -> Result<()> {
                                     if transformed_text == added_text {
                                         None
                                     } else {
-                                        Some(ChunkLines::Changed(changed))
+                                        Some(ChunkBlock::Changed(changed))
                                     }
                                 }
                             }
-                            chunk_lines => Some(chunk_lines),
+                            block => Some(block),
                         })
                         .collect::<Vec<_>>();
                     // The filtered diff here may not actually apply to the original files. A given
@@ -427,13 +430,13 @@ fn main() -> Result<()> {
                     // here does not restore those to "not changed" lines; it just drops them. This
                     // means that there may be context lines that don't correspond to anything. Oh
                     // well :)
-                    if new_lineses.iter().any(|chunk_lines| match chunk_lines {
-                        ChunkLines::Changed(_) => true,
-                        _ => false,
-                    }) {
+                    if new_blocks
+                        .iter()
+                        .any(|block| matches!(block, ChunkBlock::Changed(_)))
+                    {
                         Some(Chunk {
                             header,
-                            lineses: new_lineses,
+                            blocks: new_blocks,
                         })
                     } else {
                         None
