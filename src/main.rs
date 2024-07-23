@@ -418,29 +418,42 @@ fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
 }
 
 fn process_changed_block(changed: Changed) -> Option<ChunkBlock> {
-    static MULTIPLE_WHITESPACE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
-
     // TODO: For now, hardcode the checks.
     if changed.removed.is_empty() || changed.added.is_empty() {
         Some(ChunkBlock::Changed(changed))
     } else {
-        // Simplifying assumption: whitespace is not significant, so
-        // join the removed lines and the add lines together and squash
-        // whitespace. As a concession to how clang-format (and humans)
-        // tend to format and reflow code, change any `( ` back to `(`
-        // to improve the effectiveness of fuzzy matching.
-        // TODO: Consider improving this to improve simple cases of
-        // reflowing C++-style comments.
-        // TODO: Line merging and whitespace collapsing should possibly be
-        // a preprocessing step.
-        let removed_text = MULTIPLE_WHITESPACE_RE
-            .replace_all(&changed.removed.join(" "), " ")
-            .into_owned()
-            .replace("( ", "(");
-        let added_text = MULTIPLE_WHITESPACE_RE
-            .replace_all(&changed.added.join(" "), " ")
-            .into_owned()
-            .replace("( ", "(");
+        // Simplifying heuristics:
+        // 1. Whitespace is not significant, so join the lines and squash consecutive runs of
+        //    whitespace characters into a space.
+        // 2. Since the above heuristic tends to produce `( `, e.g. when a function call is
+        //    reflowed to the following line, convert `( ` back to `(`.
+        // 3. Strip the comment delimiter from lines starting with `//` to improve fuzzy matching
+        //    when comments are reflowed across lines.
+        // TODO: Perhaps these heuristics should be configurable.
+        fn apply_heuristics(lines: &[&str]) -> String {
+            static MULTIPLE_WHITESPACE_RE: Lazy<Regex> =
+                Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
+            fn trim_leading_comment(s: &str) -> &str {
+                let s = s.trim_start();
+                let s = s.strip_prefix("// ").unwrap_or(&s);
+                s
+            }
+
+            MULTIPLE_WHITESPACE_RE
+                .replace_all(
+                    &lines
+                        .iter()
+                        .cloned()
+                        .map(trim_leading_comment)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    " ",
+                )
+                .into_owned()
+                .replace("( ", "(")
+        }
+        let removed_text = apply_heuristics(&changed.removed);
+        let added_text = apply_heuristics(&changed.added);
         // Attempt to transform the before (aka removed) to the after (aka
         // added). Is this efficient? Not particularly. Does it work? Ish.
         let transformed_text = REPLACEMENTS
