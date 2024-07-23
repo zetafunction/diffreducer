@@ -282,11 +282,7 @@ const REPLACEMENTS: &[Replacement] = &[
     },
 ];
 
-fn main() -> Result<()> {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input)?;
-    let input = input;
-
+fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
     // diff --git a/ash/accelerators/accelerator_capslock_state_machine.cc b/ash/accelerators/accelerator_capslock_state_machine.cc
     // index 28c373b242560..75f0f75e738a2 100644
     // --- a/ash/accelerators/accelerator_capslock_state_machine.cc
@@ -299,7 +295,6 @@ fn main() -> Result<()> {
     ))?;
     // @@ -27,8 +27,8 @@ AcceleratorCapslockStateMachine::AcceleratorCapslockStateMachine(
     let chunk_header_re = Regex::new(r"(?m)@@ .+\n")?;
-    let multiple_whitespace_re = Regex::new(r"\s{2,}")?;
 
     let file_headers = file_header_re
         .find_iter(&input)
@@ -307,7 +302,7 @@ fn main() -> Result<()> {
         .chain(Some(None))
         .collect::<Vec<_>>();
 
-    let files = file_headers
+    Ok(file_headers
         .iter()
         .zip(file_headers.iter().skip(1))
         .map(|(current, next)| {
@@ -374,9 +369,13 @@ fn main() -> Result<()> {
 
             FileDiff { header, chunks }
         })
-        .collect::<Vec<_>>();
+        .collect())
+}
 
-    let files = files
+fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
+    let multiple_whitespace_re = Regex::new(r"\s{2,}")?;
+
+    Ok(file_diffs
         .into_iter()
         .filter_map(|FileDiff { header, chunks }| {
             let chunks = chunks
@@ -449,9 +448,19 @@ fn main() -> Result<()> {
                 Some(FileDiff { header, chunks })
             }
         })
-        .collect::<Vec<_>>();
+        .collect())
+}
 
-    for file in files {
+fn main() -> Result<()> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let input = input;
+
+    let file_diffs = parse_file_diffs(&input)?;
+
+    let processed_diffs = process_file_diffs(file_diffs)?;
+
+    for file in processed_diffs {
         println!("{file}");
     }
 
