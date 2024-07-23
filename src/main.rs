@@ -62,8 +62,6 @@ enum ChunkLines<'a> {
 
 impl<'a> fmt::Display for ChunkLines<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO: Fix the formatting here. There tend to be extra newlines, probably due to
-        // unprincipled parsing :)
         match self {
             ChunkLines::Context(lines) => {
                 for line in lines {
