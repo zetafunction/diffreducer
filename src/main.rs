@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::fmt;
 use std::io::{self, Read};
@@ -287,16 +288,19 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
     // index 28c373b242560..75f0f75e738a2 100644
     // --- a/ash/accelerators/accelerator_capslock_state_machine.cc
     // +++ b/ash/accelerators/accelerator_capslock_state_machine.cc
-    let file_header_re = Regex::new(concat!(
-        r"(?m)",
-        r"^(?:diff --git a/.+ b/.+\nindex [0-9a-f]+..[0-9a-f]+ \d+\n)?",
-        r"--- .+\n",
-        r"[+]{3} .+\n",
-    ))?;
+    static FILE_HEADER_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(concat!(
+            r"(?m)",
+            r"^(?:diff --git a/.+ b/.+\nindex [0-9a-f]+..[0-9a-f]+ \d+\n)?",
+            r"--- .+\n",
+            r"[+]{3} .+\n",
+        ))
+        .unwrap()
+    });
     // @@ -27,8 +27,8 @@ AcceleratorCapslockStateMachine::AcceleratorCapslockStateMachine(
-    let chunk_header_re = Regex::new(r"(?m)@@ .+\n")?;
+    static CHUNK_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)@@ .+\n").unwrap());
 
-    let file_headers = file_header_re
+    let file_headers = FILE_HEADER_RE
         .find_iter(&input)
         .map(Some)
         .chain(Some(None))
@@ -315,7 +319,7 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
                 None => &input[current.start()..],
             };
 
-            let chunk_headers = chunk_header_re
+            let chunk_headers = CHUNK_HEADER_RE
                 .find_iter(chunks_text)
                 .map(Some)
                 .chain(Some(None))
@@ -373,8 +377,6 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
 }
 
 fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
-    let multiple_whitespace_re = Regex::new(r"\s{2,}")?;
-
     Ok(file_diffs
         .into_iter()
         .filter_map(|FileDiff { header, chunks }| {
@@ -384,43 +386,7 @@ fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
                     let new_blocks = blocks
                         .into_iter()
                         .filter_map(|block| match block {
-                            ChunkBlock::Changed(changed) => {
-                                // TODO: For now, hardcode the checks.
-                                if changed.removed.is_empty() || changed.added.is_empty() {
-                                    Some(ChunkBlock::Changed(changed))
-                                } else {
-                                    // Simplifying assumption: whitespace is not significant, so
-                                    // join the removed lines and the add lines together and squash
-                                    // whitespace. As a concession to how clang-format (and humans)
-                                    // tend to format and reflow code, change any `( ` back to `(`
-                                    // to improve the effectiveness of fuzzy matching.
-                                    // TODO: Consider improving this to improve simple cases of
-                                    // reflowing C++-style comments.
-                                    // TODO: Line merging and whitespace collapsing should possibly be
-                                    // a preprocessing step.
-                                    let removed_text = multiple_whitespace_re
-                                        .replace_all(&changed.removed.join(" "), " ")
-                                        .into_owned()
-                                        .replace("( ", "(");
-                                    let added_text = multiple_whitespace_re
-                                        .replace_all(&changed.added.join(" "), " ")
-                                        .into_owned()
-                                        .replace("( ", "(");
-                                    // Attempt to transform the before (aka removed) to the after (aka
-                                    // added). Is this efficient? Not particularly. Does it work? Ish.
-                                    let transformed_text = REPLACEMENTS.iter().fold(
-                                        removed_text,
-                                        |current, replacement| {
-                                            current.replace(replacement.before, replacement.after)
-                                        },
-                                    );
-                                    if transformed_text == added_text {
-                                        None
-                                    } else {
-                                        Some(ChunkBlock::Changed(changed))
-                                    }
-                                }
-                            }
+                            ChunkBlock::Changed(changed) => process_changed_block(changed),
                             block => Some(block),
                         })
                         .collect::<Vec<_>>();
@@ -449,6 +415,46 @@ fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
             }
         })
         .collect())
+}
+
+fn process_changed_block(changed: Changed) -> Option<ChunkBlock> {
+    static MULTIPLE_WHITESPACE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
+
+    // TODO: For now, hardcode the checks.
+    if changed.removed.is_empty() || changed.added.is_empty() {
+        Some(ChunkBlock::Changed(changed))
+    } else {
+        // Simplifying assumption: whitespace is not significant, so
+        // join the removed lines and the add lines together and squash
+        // whitespace. As a concession to how clang-format (and humans)
+        // tend to format and reflow code, change any `( ` back to `(`
+        // to improve the effectiveness of fuzzy matching.
+        // TODO: Consider improving this to improve simple cases of
+        // reflowing C++-style comments.
+        // TODO: Line merging and whitespace collapsing should possibly be
+        // a preprocessing step.
+        let removed_text = MULTIPLE_WHITESPACE_RE
+            .replace_all(&changed.removed.join(" "), " ")
+            .into_owned()
+            .replace("( ", "(");
+        let added_text = MULTIPLE_WHITESPACE_RE
+            .replace_all(&changed.added.join(" "), " ")
+            .into_owned()
+            .replace("( ", "(");
+        // Attempt to transform the before (aka removed) to the after (aka
+        // added). Is this efficient? Not particularly. Does it work? Ish.
+        let transformed_text = REPLACEMENTS
+            .iter()
+            .fold(removed_text, |current, replacement| {
+                current.replace(replacement.before, replacement.after)
+            });
+        if transformed_text == added_text {
+            // TODO: Maybe this should return ChunkBlock::Elided or something?
+            None
+        } else {
+            Some(ChunkBlock::Changed(changed))
+        }
+    }
 }
 
 fn main() -> Result<()> {
