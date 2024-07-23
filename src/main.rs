@@ -283,7 +283,7 @@ const REPLACEMENTS: &[Replacement] = &[
     },
 ];
 
-fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
+fn parse_file_diffs(input: &str) -> Vec<FileDiff> {
     // diff --git a/ash/accelerators/accelerator_capslock_state_machine.cc b/ash/accelerators/accelerator_capslock_state_machine.cc
     // index 28c373b242560..75f0f75e738a2 100644
     // --- a/ash/accelerators/accelerator_capslock_state_machine.cc
@@ -301,12 +301,12 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
     static CHUNK_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)@@ .+\n").unwrap());
 
     let file_headers = FILE_HEADER_RE
-        .find_iter(&input)
+        .find_iter(input)
         .map(Some)
         .chain(Some(None))
         .collect::<Vec<_>>();
 
-    Ok(file_headers
+    file_headers
         .iter()
         .zip(file_headers.iter().skip(1))
         .map(|(current, next)| {
@@ -314,13 +314,13 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
             let current = current.unwrap();
             let header = current.as_str();
 
-            let chunks_text = match next {
+            let file_diff_text = match next {
                 Some(next) => &input[current.end()..next.start()],
                 None => &input[current.start()..],
             };
 
             let chunk_headers = CHUNK_HEADER_RE
-                .find_iter(chunks_text)
+                .find_iter(file_diff_text)
                 .map(Some)
                 .chain(Some(None))
                 .collect::<Vec<_>>();
@@ -334,8 +334,8 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
                     let header = current.as_str();
 
                     let chunk_text = match next {
-                        Some(next) => &chunks_text[current.end()..next.start()],
-                        None => &chunks_text[current.end()..],
+                        Some(next) => &file_diff_text[current.end()..next.start()],
+                        None => &file_diff_text[current.end()..],
                     };
 
                     let chunk_text_lines = chunk_text
@@ -359,7 +359,7 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
                             );
                             if removed.is_empty() && added.is_empty() {
                                 ChunkBlock::Context(
-                                    lines.iter().map(|(_prefix, line)| line).cloned().collect(),
+                                    lines.iter().map(|(_prefix, line)| line).copied().collect(),
                                 )
                             } else {
                                 ChunkBlock::Changed(Changed { removed, added })
@@ -373,11 +373,11 @@ fn parse_file_diffs(input: &str) -> Result<Vec<FileDiff>> {
 
             FileDiff { header, chunks }
         })
-        .collect())
+        .collect()
 }
 
-fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
-    Ok(file_diffs
+fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Vec<FileDiff> {
+    file_diffs
         .into_iter()
         .filter_map(|FileDiff { header, chunks }| {
             let chunks = chunks
@@ -387,7 +387,7 @@ fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
                         .into_iter()
                         .filter_map(|block| match block {
                             ChunkBlock::Changed(changed) => process_changed_block(changed),
-                            block => Some(block),
+                            ChunkBlock::Context(_) => Some(block),
                         })
                         .collect::<Vec<_>>();
                     // The filtered diff here may not actually apply to the original files. A given
@@ -414,7 +414,7 @@ fn process_file_diffs(file_diffs: Vec<FileDiff>) -> Result<Vec<FileDiff>> {
                 Some(FileDiff { header, chunks })
             }
         })
-        .collect())
+        .collect()
 }
 
 fn process_changed_block(changed: Changed) -> Option<ChunkBlock> {
@@ -435,7 +435,7 @@ fn process_changed_block(changed: Changed) -> Option<ChunkBlock> {
                 Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
             fn trim_leading_comment(s: &str) -> &str {
                 let s = s.trim_start();
-                let s = s.strip_prefix("// ").unwrap_or(&s);
+                let s = s.strip_prefix("// ").unwrap_or(s);
                 s
             }
 
@@ -443,7 +443,7 @@ fn process_changed_block(changed: Changed) -> Option<ChunkBlock> {
                 .replace_all(
                     &lines
                         .iter()
-                        .cloned()
+                        .copied()
                         .map(trim_leading_comment)
                         .collect::<Vec<_>>()
                         .join(" "),
@@ -475,9 +475,9 @@ fn main() -> Result<()> {
     io::stdin().read_to_string(&mut input)?;
     let input = input;
 
-    let file_diffs = parse_file_diffs(&input)?;
+    let file_diffs = parse_file_diffs(&input);
 
-    let processed_diffs = process_file_diffs(file_diffs)?;
+    let processed_diffs = process_file_diffs(file_diffs);
 
     for file in processed_diffs {
         println!("{file}");
