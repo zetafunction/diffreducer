@@ -33,11 +33,6 @@ impl<'a> fmt::Display for FileDiff<'a> {
     }
 }
 
-// TODO: Redo the representation to simplify the loop. A Vec is not needed here, as a chunk always
-// has:
-// - before lines
-// - the changed lines
-// - after lines
 #[derive(Debug)]
 struct Chunk<'a> {
     header: &'a str,
@@ -344,31 +339,27 @@ fn main() -> Result<()> {
                         .collect::<Vec<_>>();
                     let chunk_lineses = chunk_text_lines
                         .chunk_by(|&(a, _), &(b, _)| a == b || a == "-" && b == "+")
-                        .map(
-                            |lines| match (lines.first().unwrap().0, lines.last().unwrap().0) {
-                                (" ", " ") => ChunkLines::Context(
+                        .map(|lines| {
+                            let (removed, added) = lines.iter().fold(
+                                (Vec::new(), Vec::new()),
+                                |(mut removed, mut added), &(prefix, line)| {
+                                    match prefix {
+                                        " " => (),
+                                        "-" => removed.push(line),
+                                        "+" => added.push(line),
+                                        _ => panic!("unexpected prefix {prefix}!"),
+                                    };
+                                    (removed, added)
+                                },
+                            );
+                            if removed.is_empty() && added.is_empty() {
+                                ChunkLines::Context(
                                     lines.iter().map(|(_prefix, line)| line).cloned().collect(),
-                                ),
-                                ("+", "+") | ("-", "+") | ("-", "-") => {
-                                    // Assumption: in a given chunk with changed lines, all `_`
-                                    // lines and all `+` lines are grouped together.
-                                    let removed_lines_count = lines
-                                        .iter()
-                                        .take_while(|(prefix, _line)| *prefix == "-")
-                                        .count();
-                                    let (removed, added) = lines.split_at(removed_lines_count);
-                                    let removed = removed
-                                        .iter()
-                                        .map(|(_prefix, line)| line)
-                                        .cloned()
-                                        .collect();
-                                    let added =
-                                        added.iter().map(|(_prefix, line)| line).cloned().collect();
-                                    ChunkLines::Changed(Changed { removed, added })
-                                }
-                                chars => panic!("Unexpected prefix characters: {chars:?}"),
-                            },
-                        )
+                                )
+                            } else {
+                                ChunkLines::Changed(Changed { removed, added })
+                            }
+                        })
                         .collect::<Vec<_>>();
 
                     Chunk {
@@ -401,6 +392,8 @@ fn main() -> Result<()> {
                                     // whitespace. As a concession to how clang-format (and humans)
                                     // tend to format and reflow code, change any `( ` back to `(`
                                     // to improve the effectiveness of fuzzy matching.
+                                    // TODO: Consider improving this to improve simple cases of
+                                    // reflowing C++-style comments.
                                     // TODO: Line merging and whitespace collapsing should possibly be
                                     // a preprocessing step.
                                     let removed_text = multiple_whitespace_re
@@ -429,8 +422,11 @@ fn main() -> Result<()> {
                             chunk_lines => Some(chunk_lines),
                         })
                         .collect::<Vec<_>>();
-                    // TODO: This is totally dubious but the representation of Chunk is not quite
-                    // correct.
+                    // The filtered diff here may not actually apply to the original files. A given
+                    // chunk may have multiple changed blocks, but the filtering mechanism used
+                    // here does not restore those to "not changed" lines; it just drops them. This
+                    // means that there may be context lines that don't correspond to anything. Oh
+                    // well :)
                     if new_lineses.iter().any(|chunk_lines| match chunk_lines {
                         ChunkLines::Changed(_) => true,
                         _ => false,
